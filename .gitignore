@@ -1,0 +1,16 @@
+# Logs del sistema (¡No queremos subirlos!)
+*.log
+veeam_traps.log
+
+# Archivos temporales de Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Entornos virtuales (si usas venv)
+venv/
+.venv/
+
+# Archivos de configuración oculta o credenciales
+.env
