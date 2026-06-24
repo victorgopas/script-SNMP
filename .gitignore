@@ -1,5 +1,6 @@
 # Logs del sistema (¡No queremos subirlos!)
 *.log
+*.txt
 veeam_traps.log
 
 # Archivos temporales de Python
