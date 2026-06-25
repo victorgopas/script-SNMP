@@ -24,9 +24,8 @@ Antes de arrancar el sistema en el nuevo equipo, asegúrate de cumplir con lo si
 
 ## 🛠️ Pasos para el Despliegue desde Cero
 
-### Paso 1: Ubicación del Repositorio
-Para que las rutas del sistema y de Grafana Alloy coincidan perfectamente sin configuraciones extrañas, **copia los archivos de este repositorio directamente en la siguiente ruta de la raíz**:
-La estructura final en el disco duro debe verse exactamente así:
+### Paso 1: Ubicación de los logs
+Para que las rutas del sistema y de Grafana Alloy coincidan perfectamente sin configuraciones extrañas, la estructura final en el disco duro debe verse exactamente así:
 C:\
 └── VeeamMonitor\
     ├── logs\
