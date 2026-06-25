@@ -1,29 +1,81 @@
 import asyncio
 import logging
+from logging.handlers import RotatingFileHandler
 import email
 import re
 import json
 import os
 from datetime import datetime, timezone
 from aiosmtpd.controller import Controller
+import socket
 
-# Log interno de la consola
+
+# ==========================================
+# 0. CONFIGURACIÓN DE CONSOLA (Para ver qué pasa en pantalla)
+# ==========================================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
 
+# ==========================================
+# 1. CONFIGURACIÓN DE RUTAS ESTÁNDAR
+# ==========================================
+BASE_DIR = r"C:\VeeamMonitor"
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+LOG_FILE = os.path.join(LOG_DIR, "veeam_structured.log")
 
-# TO DO: seguridad
-#IP_VEEAM_AUTORIZADA = "10.20.0.X" 
+if not os.path.exists(LOG_DIR):
+    os.makedirs(LOG_DIR)
 
+# ==========================================
+# 2. CONFIGURACIÓN DEL SISTEMA DE LOGS (ROTACIÓN PARA GRAFANA)
+# ==========================================
+log_handler = RotatingFileHandler(
+    LOG_FILE, 
+    maxBytes=10 * 1024 * 1024, 
+    backupCount=5
+)
+log_handler.setFormatter(logging.Formatter('%(message)s'))
 
-# Este será el archivo que vigilará Promtail o Logstash
-ARCHIVO_LOG_JSON = "veeam_structured.log"
+# Usamos un logger específico "VeeamLogger" solo para el archivo JSON
+json_logger = logging.getLogger("VeeamLogger")
+json_logger.setLevel(logging.INFO)
+json_logger.addHandler(log_handler)
+# Evitar que el texto JSON crudo ensucie la pantalla negra
+json_logger.propagate = False 
 
+# ==========================================
+# 3. FUNCIÓN PARA GENERAR Y GUARDAR EL JSON
+# ==========================================
+def guardar_log_veeam(ip_origen, job_name, status, detalles):
+    # Generar la hora exacta en formato UTC compatible con Grafana/Loki
+    timestamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%fZ')
+    
+    log_data = {
+        "timestamp": timestamp,
+        "datasource": "veeam_receiver",
+        "ip_origen": ip_origen,
+        "job_name": job_name,
+        "status": status,
+        "detalles": detalles
+    }
+    
+    # Convertir a JSON y mandarlo exclusivamente al archivo rotativo
+    json_string = json.dumps(log_data)
+    json_logger.info(json_string)
+    
+    # Mostrar un mensaje limpio en la consola
+    logging.info(f"NUEVO LOG GUARDADO -> {job_name} [{status}]")
+
+# ==========================================
+# 4. SERVIDOR SMTP (RECEPTOR)
+# ==========================================
 class ReceptorCorreosVeeam:
     async def handle_DATA(self, server, session, envelope):
         ip_cliente = session.peer[0]
         
-        #if IP_VEEAM_AUTORIZADA != "10.20.0.X" and ip_cliente != IP_VEEAM_AUTORIZADA and ip_cliente != "127.0.0.1":
-            #return '554 Access denied'
+        # TO DO: Seguridad (Descomentar cuando quieras filtrar IPs)
+        # IP_VEEAM_AUTORIZADA = "10.20.0.X"
+        # if ip_cliente != IP_VEEAM_AUTORIZADA and ip_cliente != "127.0.0.1":
+        #     return '554 Access denied'
 
         raw_email = envelope.content.decode('utf-8', errors='replace')
         mensaje = email.message_from_string(raw_email)
@@ -49,33 +101,29 @@ class ReceptorCorreosVeeam:
         status_match = re.search(r'\b(Success|Warning|Error|Failed)\b', cuerpo_texto, re.IGNORECASE)
         status = status_match.group(1).strip().upper() if status_match else "UNKNOWN"
 
-        # Guardar todo el cuerpo del correo de forma segura en una sola línea JSON
-        detalles_limpios = " ".join(cuerpo_texto.split())[:500]  # Limitamos a los primeros 500 caracteres
+        # Limpiar detalles
+        detalles_limpios = " ".join(cuerpo_texto.split())[:500]
 
-        # Estructura JSON perfecta para Grafana Loki / ELK
-        log_entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
-            "datasource": "veeam_receiver",
-            "ip_origen": ip_origen,
-            "job_name": job_name,
-            "status": status,
-            "detalles": detalles_limpios
-        }
-
-        # Guardar en el archivo (Modo 'Append', una línea por JSON)
-        with open(ARCHIVO_LOG_JSON, mode='a', encoding='utf-8') as f:
-            f.write(json.dumps(log_entry) + "\n")
-
-        logging.info(f"NUEVO LOG JSON GENERADO -> {job_name} [{status}]")
+        # Delegar el guardado a la función centralizada
+        guardar_log_veeam(ip_origen, job_name, status, detalles_limpios)
 
 async def main():
     handler = ReceptorCorreosVeeam()
-    IP_LOCAL = "10.10.30.45" 
     PUERTO = 2525
+    
+    # TRUCO MÁGICO: Auto-detecta la IP privada real de este servidor
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80)) # No llega a enviar datos, solo mira qué IP usa el PC para salir
+        IP_LOCAL = s.getsockname()[0]
+        s.close()
+    except Exception:
+        IP_LOCAL = "127.0.0.1" # Por si el servidor no tuviera red en ese momento
     
     controller = Controller(handler, hostname=IP_LOCAL, port=PUERTO)
     controller.start()
     logging.info(f"Servidor SMTP preparado para Grafana en {IP_LOCAL}:{PUERTO}...")
+    logging.info(f"Ruta de logs: {LOG_FILE}")
     
     try:
         while True:
